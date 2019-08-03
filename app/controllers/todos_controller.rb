@@ -1,4 +1,5 @@
 class TodosController < ApplicationController
+  include ActionController::HttpAuthentication::Token::ControllerMethods
   before_action :authorize_access_request!
   before_action :set_todo, only: [:show, :update, :destroy]
 
@@ -6,15 +7,25 @@ class TodosController < ApplicationController
   def index
     @todos = current_user.todos
 
-    render json: @todos
+    render json: @todos, include: {
+      "attachments_blobs": { 
+        only: [:id, :filename] 
+      }
+    }
   end
   
   #post todos
   def create
     @todo = current_user.todos.build(todo_params)
-    
+
     if @todo.save
-      render json: @todo, status: :created, location: @todo
+      @todo.attachments.attach(params[:attachments].values) if params[:attachments]
+
+      render json: @todo, include: {
+        "attachments_blobs": { 
+          only: [:id, :filename] 
+        }
+      }, status: :created
     else
       render json: @todo.errors, status: :unprocessable_entity
     end
@@ -28,7 +39,13 @@ class TodosController < ApplicationController
   #patch todos/:id
   def update
     if @todo.update(todo_params)
-      render json: @todo
+      @todo.attachments.attach(params[:attachments].values) if params[:attachments]
+      
+      if params[:willDestroyedBlobs] && params[:willDestroyedBlobs].values.length > 0 then
+          ActiveStorage::Attachment.delete(params[:willDestroyedBlobs].values)
+      end
+
+      render json: @todo.attachments_blobs, only: [:id, :filename]
     else
       render json: @todo.errors, status: :unprocessable_entity
     end
@@ -46,6 +63,10 @@ class TodosController < ApplicationController
   end
 
   def todo_params
-    params.require(:todo).permit(:title, :body, :status, todo_files: [])
+    params.permit(:title, :body, :status)
+  end
+
+  def attachments_params
+    params.permit(attachments: [], willDestroyedBlobs: [])
   end
 end
